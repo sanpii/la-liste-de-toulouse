@@ -1,0 +1,47 @@
+#!/bin/bash
+
+set -eu
+
+read -p "This script will erase all data in csv.data table. Are you sure? [y/N] "
+if [[ ! $REPLY =~ ^[Yy]$ ]]
+then
+    exit 0
+fi
+
+psql --no-psqlrc --quiet --file src/structure.sql blacklist
+psql --no-psqlrc --quiet --command 'TRUNCATE csv.data;' blacklist
+psql --no-psqlrc --quiet --command 'TRUNCATE csv.blacklist;' blacklist
+
+for dir in $(find blacklists -type d)
+do
+    domains=0
+    urls=0
+
+    if [ -e "$dir/domains" ]
+    then
+        domains=$(wc -l < "$dir/domains")
+    fi
+    if [ -e "$dir/urls" ]
+    then
+        urls=$(wc -l < "$dir/urls")
+    fi
+
+    category=$(basename $dir)
+    if [ -n $category -a $category != 'blacklists' ]
+    then
+        psql --no-psqlrc --quiet --command "INSERT INTO csv.blacklist (category, domains, urls) VALUES('$category', '$domains', '$urls');" blacklist
+    fi
+done
+
+for tsv in $(ls *.tsv)
+do
+    if [ $tsv != '_blacklists.tsv' ]
+    then
+        provider=${tsv%.*}
+
+        psql --no-psqlrc --quiet --command "\COPY csv.data (category, url, status, blocked) FROM '$tsv' WITH csv DELIMITER '	'" blacklist
+        psql --no-psqlrc --quiet --command "UPDATE csv.data SET provider='$provider' WHERE provider IS NULL" blacklist
+    fi
+done
+
+psql --no-psqlrc --quiet --file src/dispatch.sql blacklist
