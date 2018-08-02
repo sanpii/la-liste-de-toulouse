@@ -1,0 +1,116 @@
+---
+title: "La liste de Toulouse"
+---
+
+```{r, setup, include=FALSE}
+library(odbc)
+library(ggplot2)
+
+db <- dbConnect(odbc::odbc(), Driver="PostgreSQL", Database="blacklist")
+knitr::opts_chunk$set(connection = "db")
+knitr::opts_knit$set(sql.max.print = -1)
+```
+# Introduction
+
+La [liste de Toulouse](https://dsi.ut-capitole.fr/blacklists/) est une liste de
+filtrage librement diffusée par un responsable du service informatique de
+l’université de Toulouse.
+
+Elle semble, à tord, être utilisée comme une liste noire des sites à sensurer
+par l’administration française.
+
+# Informations générales
+
+Voici les statistiques issue d’une heure de requête sur le wifi public de Nantes
+Métropole :
+
+```{sql, echo=FALSE, output.var="done"}
+SELECT category.name AS category,
+        sum(csv.blacklist.domains::integer + csv.blacklist.urls::integer) AS total,
+        count(1) AS testé,
+        round(count(1)::numeric / sum(csv.blacklist.domains::numeric + csv.blacklist.urls::numeric) * 100, 2) AS "% testé"
+    FROM url
+    JOIN category ON category.id = url.category_id
+    JOIN csv.blacklist ON csv.blacklist.category = category.name
+    GROUP BY GROUPING SETS ((1), ())
+    ORDER BY 1;
+```
+
+```{r, echo=FALSE}
+knitr::kable(done)
+```
+
+## Code HTTP
+
+```{sql, echo=FALSE, output.var="status"}
+SELECT status/100 || 'xx' AS code, count(1) AS total
+    FROM url
+    GROUP BY 1
+    ORDER BY 1;
+```
+
+Pour un total de `r as.integer(sum(status$total))` sites testés, voici la
+répartition des code d’erreurs http par famille :
+
+```{r, echo=FALSE}
+knitr::kable(status)
+```
+
+À noter que les sites bloqués le sont via une redirection temporaire (302) vers
+la page <https://controller.access.network/403.html>.
+
+```{sql, echo=FALSE, output.var="category"}
+SELECT status/100 || 'xx' AS code, category.name AS category, count(1) AS total
+    FROM url
+    JOIN category ON category.id = url.category_id
+    GROUP BY 1, 2
+    ORDER BY 1, 2;
+```
+
+```{r, echo=FALSE, fig.cap="Répartition par catégories"}
+ggplot(data=category, aes(x=code, y=as.integer(total), fill=category)) +
+    geom_bar(stat="identity") +
+    xlab("Famille de codes HTTP") +
+    ylab("Nombre de sites") +
+    theme(legend.position="bottom")
+```
+
+Les différentes familles de code :
+
+* 0xx : délai de connexion dépassé ;
+* 1xx : information ;
+* 2xx : succès ;
+* 3xx : redirection ;
+* 4xx : erreur du client web ;
+* 5xx : erreur du serveur / du serveur d'application.
+
+## Blocage
+
+```{sql, echo=FALSE, output.var="blocked"}
+SELECT CASE WHEN blocked = true THEN 'Oui' ELSE 'Non' END AS Bloqué, count(1) AS total
+    FROM url
+    GROUP BY 1
+    ORDER BY 1;
+```
+
+Voici la répartition selon le blocage d’un site :
+
+```{r, echo=FALSE}
+knitr::kable(blocked)
+```
+
+Les catégories les plus bloquées :
+
+```{sql, echo=FALSE, output.var="top_blocked"}
+SELECT category.name AS category, count(1) AS total
+    FROM url
+    JOIN category ON category.id = url.category_id
+    WHERE blocked = true
+    GROUP BY 1
+    ORDER BY 2 DESC
+    LIMIT 5;
+```
+
+```{r, echo=FALSE}
+knitr::kable(top_blocked)
+```
